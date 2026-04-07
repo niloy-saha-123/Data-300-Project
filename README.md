@@ -1,144 +1,86 @@
 # Data 300 Project
-### Predicting Customer Response to Promotional Offers — Starbucks Rewards Program
+### Predicting Customer Response to Promotional Offers - Starbucks Rewards Program
 
 **Niloy Saha & Pranav Azad**
 
----
+## Status
+The repository is currently scaffolded for implementation. The first build phase sets up the package layout, portable dependencies, and the modeling rules that must stay fixed throughout the project.
 
-## Overview
-This project applies machine learning to the Starbucks Rewards Mobile App dataset to predict whether a customer will complete a promotional offer based on their demographics and past behavior. The pipeline covers data parsing, feature engineering, classification modeling, customer segmentation, and optional uplift analysis.
+## Project Overview
+This project builds a machine learning pipeline on the Starbucks Rewards dataset to predict whether a customer will complete a promotional offer. The intended workflow is:
 
----
+1. Parse and flatten the raw JSON files.
+2. Build a clean `(customer, offer)` response table.
+3. Engineer demographic, behavioral, and offer-level features.
+4. Train and compare Logistic Regression, Random Forest, and XGBoost.
+5. Interpret the best model with feature importance and SHAP.
+6. Segment customers with K-Means clustering.
+7. Optionally add uplift modeling and a simple budget allocation simulation.
 
 ## Dataset
-
-Three JSON files from the [Starbucks Rewards Kaggle dataset](https://www.kaggle.com/datasets/blacktile/starbucks-app-customer-reward-program-data):
+The project uses three JSON files from the [Starbucks Rewards Kaggle dataset](https://www.kaggle.com/datasets/blacktile/starbucks-app-customer-reward-program-data):
 
 | File | Description |
-|---|---|
-| `portfolio.json` | Details on 10 promotional offers (type, reward, duration, channels) |
-| `profile.json` | Demographics for 17,000 simulated customers |
-| `transcript.json` | 300,000+ event logs (offer received, viewed, completed, transactions) |
+| --- | --- |
+| `portfolio.json` | Offer metadata: type, reward, duration, channels |
+| `profile.json` | Customer demographics and membership date |
+| `transcript.json` | Time-ordered customer events and transactions |
 
-Place all three files in `data/raw/` before running anything.
+Place all three files in `data/raw/` before running the pipeline.
 
----
+## Fixed Modeling Rules
+These decisions are part of the project spec and should not drift between branches.
+
+- Positive label: a customer-offer pair is labeled `1` only when the customer receives the offer, views it, and then completes it within the offer duration window.
+- Completed without view: rows where the offer is completed without a prior view are labeled `0`, because they reflect organic behavior rather than offer response.
+- Informational offers: excluded from the classification target because they cannot be completed in the same way as BOGO and discount offers.
+- Leakage prevention: all behavioral features must be computed using only events that occurred before the current offer's `received_time`.
+
+## Repository Layout
+```
+data/
+  raw/            # Input JSON files, kept local and never modified
+  processed/      # Parsed and engineered outputs
+notebooks/        # EDA and analysis notebooks
+src/
+  data/           # Parsing, target construction, dataset merges
+  features/       # Demographic, behavioral, and offer features
+  models/         # Training, evaluation, and model explanation
+  clustering/     # Customer segmentation
+  utils/          # Shared helpers
+reports/
+  figures/        # Exported report figures
+models/           # Serialized trained models, kept local
+tests/            # Unit tests for pipeline logic
+```
 
 ## Setup
-
-**Python 3.10+ recommended.**
+Python `3.10+` is recommended.
 
 ```bash
-git clone https://github.com/your-username/data-300-project.git
-cd data-300-project
+python -m venv .venv
+source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
----
-
-## How to Run
-
-Run each step in order. Each script reads from `data/processed/` and writes back to it.
+For the optional uplift modeling phase, install the stretch dependency separately:
 
 ```bash
-# 1. Parse and flatten the raw JSON files
+pip install -r requirements-uplift.txt
+```
+
+## Planned Pipeline
+The implementation is planned around these scripts and outputs:
+
+```bash
 python src/data/parse_raw.py
-
-# 2. Build the (customer, offer, label) response table
 python src/data/build_target.py
-
-# 3. Merge demographics and offer metadata
 python src/data/merge.py
-
-# 4. Build the final feature matrix
 python src/features/customer_features.py
 python src/features/offer_features.py
-
-# 5. Train and evaluate models
 python src/models/train.py
 python src/models/evaluate.py
 ```
 
-Notebooks in `notebooks/` can be run independently after the processed data files exist.
-
----
-
-## Project Structure
-
-```
-data-300-project/
-├── data/
-│   ├── raw/                  # Original JSON files — do not modify
-│   └── processed/            # Cleaned and engineered DataFrames (Parquet/CSV)
-├── notebooks/
-│   ├── 01_data_exploration.ipynb
-│   ├── 02_eda.ipynb
-│   ├── 03_feature_engineering.ipynb
-│   ├── 04_modeling.ipynb
-│   ├── 05_clustering.ipynb
-│   └── 06_uplift.ipynb
-├── src/
-│   ├── data/                 # Parsing, target construction, merging
-│   ├── features/             # Feature engineering functions
-│   ├── models/               # Training, evaluation, SHAP analysis
-│   ├── clustering/           # K-Means segmentation
-│   └── utils/                # Shared I/O and plotting helpers
-├── models/                   # Saved model files (joblib) — gitignored
-├── reports/
-│   └── figures/              # Exported figures for the report
-├── tests/                    # Unit tests for data pipeline
-├── requirements.txt
-└── README.md
-```
-
----
-
-## Models
-
-Three classifiers are trained and compared:
-
-- Logistic Regression (baseline)
-- Random Forest
-- XGBoost
-
-Evaluation metrics: ROC-AUC, F1-score, Precision-Recall AUC, and confusion matrix. Models are evaluated with 5-fold stratified cross-validation and a held-out test set.
-
----
-
-## Key Design Decisions
-
-**Target variable:** A customer-offer pair is labeled positive (1) only if the customer viewed the offer and then completed it within the offer's duration window. Completions without a prior view are labeled negative — those represent organic purchases, not offer-driven behavior.
-
-**Leakage prevention:** All behavioral features (transaction counts, spend history) are computed using only events that occurred before the offer was received.
-
-**Informational offers excluded:** Since informational offers have no completion mechanic, they are excluded from the classification task.
-
----
-
-## Requirements
-
-Key dependencies:
-
-```
-pandas
-numpy
-scikit-learn
-xgboost
-shap
-matplotlib
-seaborn
-joblib
-econml        # optional, for uplift modeling
-black
-flake8
-```
-
-Full list with pinned versions in `requirements.txt`.
-
----
-
 ## Contributing
-
-Branch naming: `name/short-description` (e.g., `niloy/parse-json`, `pranav/eda-notebook`).
-Open a pull request to merge into `main`. Do not commit directly to `main`.
-Large files (models, raw data) are gitignored — store them locally or via shared Drive.
+Use feature branches named `niloy/<feature-name>` and `pranav/<feature-name>`. Open pull requests into `main`; do not commit project work directly to `main`.
