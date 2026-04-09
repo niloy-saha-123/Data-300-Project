@@ -83,21 +83,26 @@ def load_transcript(path: str | Path) -> pd.DataFrame:
 
 
 def main() -> None:
-    """Load raw data files and write cleaned portfolio/profile tables to parquet."""
+    """Load raw data files and write cleaned tables to parquet."""
     portfolio_path = RAW_DATA_DIR / "portfolio.json"
     profile_path = RAW_DATA_DIR / "profile.json"
+    transcript_path = RAW_DATA_DIR / "transcript.json"
     portfolio_output_path = PROCESSED_DATA_DIR / "portfolio_clean.parquet"
     profile_output_path = PROCESSED_DATA_DIR / "profile_clean.parquet"
+    transcript_output_path = PROCESSED_DATA_DIR / "transcript_flat.parquet"
 
     portfolio = load_portfolio(portfolio_path)
     profile = load_profile(profile_path)
+    transcript = load_transcript(transcript_path)
 
     portfolio_output_path.parent.mkdir(parents=True, exist_ok=True)
     portfolio.to_parquet(portfolio_output_path, index=False)
     profile.to_parquet(profile_output_path, index=False)
+    transcript.to_parquet(transcript_output_path, index=False)
 
     print(f"Saved {len(portfolio)} rows to {portfolio_output_path}")
     print(f"Saved {len(profile)} rows to {profile_output_path}")
+    print(f"Saved {len(transcript)} rows to {transcript_output_path}")
 
 
 if __name__ == "__main__":

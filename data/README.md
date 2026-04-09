@@ -17,3 +17,4 @@
 - `transcript.json`: 306,534 events stored as one JSON object per line with blank lines mixed in. Core fields are `person`, `event`, `value`, and `time`.
 - Transcript event types: `offer received` (76,277), `offer viewed` (57,725), `offer completed` (33,579), and `transaction` (138,953).
 - Transcript `value` is schema-dependent: `offer id` appears on received/viewed events, `offer_id` plus `reward` appears on completed events, and `amount` appears on transaction events.
+- `transcript_flat.parquet` should normalize those variants into a single flat schema with columns `person`, `event`, `time`, `offer_id`, `amount`, and `reward`.
