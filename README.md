@@ -26,7 +26,10 @@ The project uses three JSON files from the [Starbucks Rewards Kaggle dataset](ht
 | `profile.json` | Customer demographics and membership date |
 | `transcript.json` | Time-ordered customer events and transactions |
 
-Place all three files in `data/raw/` before running the pipeline.
+Download the dataset from Kaggle here:
+[https://www.kaggle.com/datasets/blacktile/starbucks-app-customer-reward-program-data](https://www.kaggle.com/datasets/blacktile/starbucks-app-customer-reward-program-data)
+
+After downloading, place `portfolio.json`, `profile.json`, and `transcript.json` in `data/raw/` before running the pipeline. Raw data stays local and is not committed to Git.
 
 ## Fixed Modeling Rules
 These decisions are part of the project spec and should not drift between branches.
