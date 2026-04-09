@@ -9,3 +9,11 @@
 - `transcript_flat.parquet`
 - `offer_response.parquet`
 - `features.parquet`
+
+## Raw File Notes
+
+- `portfolio.json`: 10 offers stored as one JSON object per line. Key fields are `id`, `offer_type`, `difficulty`, `reward`, `duration`, and `channels`. Offer types are `bogo` (4), `discount` (4), and `informational` (2).
+- `profile.json`: 17,000 customer records stored as one JSON object per line. `became_member_on` is in `YYYYMMDD` format. Missing demographic information is encoded as `age = 118` with `gender = null` and `income = null` for 2,175 rows.
+- `transcript.json`: 306,534 events stored as one JSON object per line with blank lines mixed in. Core fields are `person`, `event`, `value`, and `time`.
+- Transcript event types: `offer received` (76,277), `offer viewed` (57,725), `offer completed` (33,579), and `transaction` (138,953).
+- Transcript `value` is schema-dependent: `offer id` appears on received/viewed events, `offer_id` plus `reward` appears on completed events, and `amount` appears on transaction events.
