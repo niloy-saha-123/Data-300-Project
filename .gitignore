@@ -211,6 +211,9 @@ data/raw/*
 !data/raw/.gitkeep
 data/processed/*
 !data/processed/.gitkeep
+!data/processed/portfolio_clean.parquet
+!data/processed/profile_clean.parquet
+!data/processed/transcript_flat.parquet
 models/*
 !models/.gitkeep
 reports/figures/*
