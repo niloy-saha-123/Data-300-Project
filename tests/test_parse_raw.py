@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pandas as pd
 
-from src.data.parse_raw import load_portfolio, load_profile
+from src.data.parse_raw import load_portfolio, load_profile, load_transcript
 
 
 def test_load_portfolio_expands_channels_and_renames_id(tmp_path: Path) -> None:
@@ -46,3 +46,33 @@ def test_load_profile_cleans_member_date_and_missing_age(tmp_path: Path) -> None
     assert pd.isna(profile.loc[1, "age"])
     assert pd.isna(profile.loc[1, "income"])
     assert pd.isna(profile.loc[1, "gender"])
+
+
+def test_load_transcript_flattens_value_payload(tmp_path: Path) -> None:
+    sample = tmp_path / "transcript.json"
+    sample.write_text(
+        '{"person": "person-1", "event": "offer received", '
+        '"value": {"offer id": "offer-1"}, "time": 0}\n'
+        '{"person": "person-1", "event": "transaction", '
+        '"value": {"amount": 12.5}, "time": 10}\n'
+        '{"person": "person-1", "event": "offer completed", '
+        '"value": {"offer_id": "offer-1", "reward": 5}, "time": 20}\n',
+        encoding="utf-8",
+    )
+
+    transcript = load_transcript(sample)
+
+    assert list(transcript.columns) == [
+        "person",
+        "event",
+        "time",
+        "offer_id",
+        "amount",
+        "reward",
+    ]
+    assert transcript.loc[0, "offer_id"] == "offer-1"
+    assert pd.isna(transcript.loc[0, "amount"])
+    assert transcript.loc[1, "amount"] == 12.5
+    assert pd.isna(transcript.loc[1, "offer_id"])
+    assert transcript.loc[2, "offer_id"] == "offer-1"
+    assert transcript.loc[2, "reward"] == 5

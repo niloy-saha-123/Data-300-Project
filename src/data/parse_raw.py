@@ -57,22 +57,52 @@ def load_profile(path: str | Path) -> pd.DataFrame:
     return profile
 
 
+def load_transcript(path: str | Path) -> pd.DataFrame:
+    """Load transcript.json and flatten the nested value payload."""
+    transcript = read_jsonl(path).copy()
+    value_columns = pd.json_normalize(transcript["value"])
+
+    if "offer id" in value_columns.columns:
+        if "offer_id" in value_columns.columns:
+            value_columns["offer_id"] = value_columns["offer_id"].fillna(
+                value_columns["offer id"]
+            )
+        else:
+            value_columns["offer_id"] = value_columns["offer id"]
+
+    for column in ["offer_id", "amount", "reward"]:
+        if column not in value_columns.columns:
+            value_columns[column] = pd.NA
+
+    transcript = pd.concat(
+        [transcript.drop(columns=["value"]), value_columns[["offer_id", "amount", "reward"]]],
+        axis=1,
+    )
+
+    return transcript
+
+
 def main() -> None:
-    """Load raw data files and write cleaned portfolio/profile tables to parquet."""
+    """Load raw data files and write cleaned tables to parquet."""
     portfolio_path = RAW_DATA_DIR / "portfolio.json"
     profile_path = RAW_DATA_DIR / "profile.json"
+    transcript_path = RAW_DATA_DIR / "transcript.json"
     portfolio_output_path = PROCESSED_DATA_DIR / "portfolio_clean.parquet"
     profile_output_path = PROCESSED_DATA_DIR / "profile_clean.parquet"
+    transcript_output_path = PROCESSED_DATA_DIR / "transcript_flat.parquet"
 
     portfolio = load_portfolio(portfolio_path)
     profile = load_profile(profile_path)
+    transcript = load_transcript(transcript_path)
 
     portfolio_output_path.parent.mkdir(parents=True, exist_ok=True)
     portfolio.to_parquet(portfolio_output_path, index=False)
     profile.to_parquet(profile_output_path, index=False)
+    transcript.to_parquet(transcript_output_path, index=False)
 
     print(f"Saved {len(portfolio)} rows to {portfolio_output_path}")
     print(f"Saved {len(profile)} rows to {profile_output_path}")
+    print(f"Saved {len(transcript)} rows to {transcript_output_path}")
 
 
 if __name__ == "__main__":
