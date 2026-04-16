@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import warnings
 from pathlib import Path
 
 import joblib
@@ -18,12 +19,18 @@ from sklearn.metrics import (
 )
 from sklearn.model_selection import StratifiedKFold, cross_validate, train_test_split
 from sklearn.pipeline import Pipeline
-from sklearn.preprocessing import StandardScaler
+from sklearn.preprocessing import MinMaxScaler
 
 try:
     from xgboost import XGBClassifier
 except ImportError:  # pragma: no cover - depends on local environment
     XGBClassifier = None
+
+warnings.filterwarnings(
+    "ignore",
+    category=RuntimeWarning,
+    message=".*encountered in matmul.*",
+)
 
 
 PROCESSED_DATA_DIR = Path("data/processed")
@@ -140,7 +147,7 @@ def build_model_registry() -> dict[str, object]:
     models: dict[str, object] = {
         "logistic_regression": Pipeline(
             [
-                ("scaler", StandardScaler()),
+                ("scaler", MinMaxScaler()),
                 (
                     "classifier",
                     LogisticRegression(
@@ -148,6 +155,7 @@ def build_model_registry() -> dict[str, object]:
                         max_iter=1000,
                         C=1.0,
                         random_state=RANDOM_STATE,
+                        solver="liblinear",
                     ),
                 ),
             ]
@@ -182,14 +190,20 @@ def train_model(
 ) -> dict[str, float]:
     """Run stratified cross-validation for one model."""
     cv_splitter = StratifiedKFold(n_splits=cv, shuffle=True, random_state=RANDOM_STATE)
-    scores = cross_validate(
-        clone(model),
-        X_train,
-        y_train,
-        cv=cv_splitter,
-        scoring=["roc_auc", "f1", "precision", "recall"],
-        n_jobs=N_JOBS,
-    )
+    with warnings.catch_warnings():
+        warnings.filterwarnings(
+            "ignore",
+            module=r"sklearn\.utils\.extmath",
+            category=RuntimeWarning,
+        )
+        scores = cross_validate(
+            clone(model),
+            X_train,
+            y_train,
+            cv=cv_splitter,
+            scoring=["roc_auc", "f1", "precision", "recall"],
+            n_jobs=N_JOBS,
+        )
 
     summary = {}
     for metric in ["roc_auc", "f1", "precision", "recall"]:
@@ -207,7 +221,13 @@ def fit_and_evaluate_model(
 ) -> tuple[object, dict[str, float]]:
     """Fit model on training split and score on validation split."""
     fitted_model = clone(model)
-    fitted_model.fit(X_train, y_train)
+    with warnings.catch_warnings():
+        warnings.filterwarnings(
+            "ignore",
+            module=r"sklearn\.utils\.extmath",
+            category=RuntimeWarning,
+        )
+        fitted_model.fit(X_train, y_train)
     validation_scores = fitted_model.predict_proba(X_validation)[:, 1]
     metrics = evaluate_binary_predictions(y_validation, pd.Series(validation_scores))
     return fitted_model, metrics
