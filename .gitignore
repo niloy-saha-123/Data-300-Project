@@ -43,6 +43,7 @@ htmlcov/
 .coverage
 .coverage.*
 .cache
+.mplconfig/
 nosetests.xml
 coverage.xml
 *.cover
@@ -215,5 +216,11 @@ models/*
 !models/.gitkeep
 reports/figures/*
 !reports/figures/.gitkeep
+reports/*.csv
+reports/*.json
 reports/*.pdf
 reports/*.pptx
+
+# Personal / local trackers (not shared)
+PROJECT_CHECKLIST_LOCAL.md
+TASKS_NILOY.md

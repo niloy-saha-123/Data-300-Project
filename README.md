@@ -36,17 +36,18 @@ Done:
 - offer features
 - final feature matrix
 - training pipeline
-- initial exploration notebook
+- validation evaluation (ROC / PR / confusion) + CSV reports
+- SHAP / feature importance (tree models) via `explain`
+- clustering (K-Means, figures, segment tables)
+- **held-out test metrics** via `test_set_evaluation` (after train)
+- initial exploration + EDA + feature notebooks
 - plotting config
-- tests for implemented pipeline
+- pytest suite (`pytest tests` works from repo root)
 
 Not done:
-- evaluation module
-- SHAP / explainability module
-- full EDA notebook
-- clustering module
-- final test-set workflow
-- uplift / budget simulation
+- uplift modeling
+- budget simulation
+- optional notebooks `04_modeling` / `05_clustering` / `06_uplift`
 - final report / slides
 
 ## Repo Layout
@@ -82,6 +83,8 @@ pip install -r requirements-uplift.txt
 ```
 
 ## Run Order
+Run from the **repository root** (paths are relative to cwd).
+
 ```bash
 python -m src.data.parse_raw
 python -m src.data.build_target
@@ -90,7 +93,13 @@ python -m src.features.customer_features
 python -m src.features.offer_features
 python -m src.features.build_features
 python -m src.models.train
+python -m src.models.evaluate
+python -m src.models.explain
+python -m src.clustering.kmeans
+python -m src.models.test_set_evaluation
 ```
+
+`test_set_evaluation` scores the **held-out test split** using models saved under `models/`. Run it **once** after training when you want final numbers for the report. Outputs: `reports/test_set_metrics.json` and `reports/test_set_model_metrics.csv`.
 
 Run tests:
 
