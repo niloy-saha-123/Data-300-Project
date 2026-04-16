@@ -2,7 +2,10 @@
 
 import pandas as pd
 
-from src.features.customer_features import build_demographic_features
+from src.features.customer_features import (
+    build_behavioral_features,
+    build_demographic_features,
+)
 
 
 def test_build_demographic_features_creates_model_ready_columns() -> None:
@@ -105,3 +108,55 @@ def test_build_demographic_features_imputes_income_by_gender_when_possible() -> 
     )
 
     assert features.loc[1, "income_imputed"] == 70000.0
+
+
+def test_build_behavioral_features_uses_only_transactions_before_received_time() -> None:
+    transcript_df = pd.DataFrame(
+        [
+            {"person": "p1", "event": "transaction", "time": 2, "amount": 10.0},
+            {"person": "p1", "event": "transaction", "time": 10, "amount": 20.0},
+            {"person": "p1", "event": "transaction", "time": 25, "amount": 100.0},
+            {"person": "p2", "event": "transaction", "time": 3, "amount": 5.0},
+        ]
+    )
+    response_df = pd.DataFrame(
+        [
+            {"person": "p1", "offer_id": "offer-a", "received_time": 5, "label": 0},
+            {"person": "p1", "offer_id": "offer-b", "received_time": 20, "label": 1},
+            {"person": "p2", "offer_id": "offer-c", "received_time": 1, "label": 0},
+        ]
+    )
+
+    features = build_behavioral_features(transcript_df, response_df)
+
+    assert len(features) == 3
+    assert features.loc[0, "n_transactions_before"] == 1
+    assert features.loc[0, "total_spend_before"] == 10.0
+    assert features.loc[0, "avg_spend_before"] == 10.0
+    assert features.loc[1, "n_transactions_before"] == 2
+    assert features.loc[1, "total_spend_before"] == 30.0
+    assert features.loc[1, "avg_spend_before"] == 15.0
+    assert round(features.loc[1, "days_since_last_transaction"], 4) == round(
+        (20 - 10) / 24.0, 4
+    )
+    assert features.loc[2, "n_transactions_before"] == 0
+    assert pd.isna(features.loc[2, "days_since_last_transaction"])
+
+
+def test_build_behavioral_features_tracks_prior_offer_history_by_received_time() -> None:
+    transcript_df = pd.DataFrame(
+        [{"person": "p1", "event": "transaction", "time": 1, "amount": 5.0}]
+    )
+    response_df = pd.DataFrame(
+        [
+            {"person": "p1", "offer_id": "offer-a", "received_time": 0, "label": 1},
+            {"person": "p1", "offer_id": "offer-b", "received_time": 0, "label": 0},
+            {"person": "p1", "offer_id": "offer-c", "received_time": 10, "label": 0},
+        ]
+    )
+
+    features = build_behavioral_features(transcript_df, response_df)
+
+    assert features["offers_received_before"].tolist() == [0, 0, 2]
+    assert features["offers_completed_before"].tolist() == [0, 0, 1]
+    assert features["offer_completion_rate_before"].tolist() == [0.0, 0.0, 0.5]
