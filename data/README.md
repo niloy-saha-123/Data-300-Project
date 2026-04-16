@@ -9,6 +9,9 @@
 - `transcript_flat.parquet`
 - `offer_response.parquet`
 - `response_merged.parquet`
+- `demographic_features.parquet`
+- `behavioral_features.parquet`
+- `offer_features.parquet`
 - `features.parquet`
 
 ## Raw File Notes
