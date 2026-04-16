@@ -8,6 +8,7 @@
 - `profile_clean.parquet`
 - `transcript_flat.parquet`
 - `offer_response.parquet`
+- `response_merged.parquet`
 - `features.parquet`
 
 ## Raw File Notes
