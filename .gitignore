@@ -217,6 +217,7 @@ models/*
 reports/figures/*
 !reports/figures/.gitkeep
 reports/feature_importance/*
+reports/local_versions/
 reports/*.csv
 reports/*.json
 reports/*.pdf

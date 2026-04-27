@@ -1,0 +1,10 @@
+{
+  "train_rows": 61021,
+  "test_rows": 15256,
+  "treated_test_rows": 12209,
+  "control_test_rows": 3047,
+  "treated_model_roc_auc": 0.7887413862167023,
+  "control_model_roc_auc": 0.7608749941729211,
+  "qini_auc": 53.49327259431119,
+  "top_30pct_incremental_gain": 242.0
+}

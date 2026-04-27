@@ -1,0 +1,8 @@
+{
+  "candidate_rows": 12209,
+  "budget": 13627.75,
+  "greedy_selected_rows": 3119,
+  "greedy_expected_incremental_response": 124.20579649149647,
+  "random_expected_incremental_response_mean": 51.166493422923374,
+  "random_expected_incremental_response_std": 1.4012751417540452
+}
