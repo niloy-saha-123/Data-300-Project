@@ -1,4 +1,4 @@
-"""Customer-level demographic and behavioral feature builders."""
+"""Build customer features without peeking past offer receipt time."""
 
 from __future__ import annotations
 
@@ -11,10 +11,11 @@ PROCESSED_DATA_DIR = Path("data/processed")
 DEMOGRAPHIC_OUTPUT_FILE = PROCESSED_DATA_DIR / "demographic_features.parquet"
 BEHAVIORAL_OUTPUT_FILE = PROCESSED_DATA_DIR / "behavioral_features.parquet"
 GENDER_LEVELS = ["F", "M", "O", "unknown"]
+OFFER_EVENTS = {"offer received", "offer viewed", "offer completed"}
 
 
 def _fill_with_group_median(series: pd.Series) -> pd.Series:
-    """Fill missing numeric values with the non-null median within a group."""
+    """Fill gaps with a within-group median when one exists."""
     non_null = series.dropna()
     if non_null.empty:
         return series
@@ -24,14 +25,12 @@ def _fill_with_group_median(series: pd.Series) -> pd.Series:
 def build_demographic_features(
     response_merged_df: pd.DataFrame, reference_date: pd.Timestamp | None = None
 ) -> pd.DataFrame:
-    """Build demographic features for each offer-response row."""
+    """Attach stable customer attributes to each offer row."""
     features = response_merged_df[
         ["person", "offer_id", "received_time", "gender", "age", "income", "became_member_on"]
     ].copy()
 
     if reference_date is None:
-        # Transcript time is relative, so anchor tenure to the latest observed
-        # calendar membership date in the dataset unless a reference date is supplied.
         reference_date = pd.Timestamp(features["became_member_on"].max()).normalize()
     else:
         reference_date = pd.Timestamp(reference_date).normalize()
@@ -39,6 +38,7 @@ def build_demographic_features(
     features["age"] = pd.to_numeric(features["age"], errors="coerce")
     features["income"] = pd.to_numeric(features["income"], errors="coerce")
     features["gender_filled"] = features["gender"].fillna("unknown")
+
     overall_income_median = features["income"].median()
     features["income_imputed"] = features.groupby("gender_filled")["income"].transform(
         _fill_with_group_median
@@ -79,25 +79,15 @@ def build_demographic_features(
         axis=1,
     )
 
-    demographic_features = demographic_features.sort_values(
+    return demographic_features.sort_values(
         ["person", "received_time", "offer_id"], kind="stable"
     ).reset_index(drop=True)
 
-    return demographic_features
 
-
-def build_behavioral_features(
-    transcript_df: pd.DataFrame, response_df: pd.DataFrame
+def _build_transaction_features(
+    transcript_df: pd.DataFrame, response_base: pd.DataFrame
 ) -> pd.DataFrame:
-    """Build pre-offer behavioral features for each offer-response row."""
-    response_base = response_df[
-        ["person", "offer_id", "received_time", "label"]
-    ].copy()
-    response_base = response_base.sort_values(
-        ["person", "received_time", "offer_id"], kind="stable"
-    ).reset_index(drop=True)
-    response_base["_row_id"] = range(len(response_base))
-
+    """Summarize spend history before each offer receipt."""
     transactions = transcript_df.loc[
         transcript_df["event"] == "transaction", ["person", "time", "amount"]
     ].copy()
@@ -109,114 +99,140 @@ def build_behavioral_features(
     )
 
     if transactions.empty:
-        transaction_features = response_base[["person", "offer_id", "received_time", "_row_id"]].copy()
-        transaction_features["n_transactions_before"] = 0
-        transaction_features["total_spend_before"] = 0.0
-        transaction_features["avg_spend_before"] = 0.0
-        transaction_features["days_since_last_transaction"] = pd.NA
-    else:
-        transactions["n_transactions_before"] = transactions.groupby("person").cumcount() + 1
-        transactions["total_spend_before"] = transactions.groupby("person")["amount"].cumsum()
-        transactions["avg_spend_before"] = (
-            transactions["total_spend_before"] / transactions["n_transactions_before"]
-        )
-        transactions["last_transaction_time"] = transactions["time"]
-        transactions_by_person = {
-            person: group[
-                [
-                    "time",
-                    "n_transactions_before",
-                    "total_spend_before",
-                    "avg_spend_before",
-                    "last_transaction_time",
-                ]
-            ]
-            .sort_values("time", kind="stable")
-            .reset_index(drop=True)
-            for person, group in transactions.groupby("person", sort=False)
-        }
+        features = response_base[["person", "offer_id", "received_time", "_row_id"]].copy()
+        features["n_transactions_before"] = 0
+        features["total_spend_before"] = 0.0
+        features["avg_spend_before"] = 0.0
+        features["days_since_last_transaction"] = pd.NA
+        return features
 
-        transaction_feature_parts = []
-        for person, person_rows in response_base.groupby("person", sort=False):
-            left = person_rows[
-                ["person", "offer_id", "received_time", "_row_id"]
-            ].sort_values("received_time", kind="stable")
-            person_transactions = transactions_by_person.get(person)
-
-            if person_transactions is None or person_transactions.empty:
-                merged = left.copy()
-                merged["n_transactions_before"] = 0
-                merged["total_spend_before"] = 0.0
-                merged["avg_spend_before"] = 0.0
-                merged["days_since_last_transaction"] = float("nan")
-            else:
-                merged = pd.merge_asof(
-                    left,
-                    person_transactions,
-                    left_on="received_time",
-                    right_on="time",
-                    direction="backward",
-                    allow_exact_matches=False,
-                )
-                merged["n_transactions_before"] = (
-                    merged["n_transactions_before"].fillna(0).astype(int)
-                )
-                merged["total_spend_before"] = merged["total_spend_before"].fillna(0.0)
-                merged["avg_spend_before"] = merged["avg_spend_before"].fillna(0.0)
-                merged["days_since_last_transaction"] = (
-                    merged["received_time"] - merged["last_transaction_time"]
-                ) / 24.0
-                merged = merged.drop(columns=["time", "last_transaction_time"])
-
-            transaction_feature_parts.append(merged)
-
-        transaction_features = pd.concat(
-            transaction_feature_parts, ignore_index=True
-        ).sort_values(["person", "received_time", "offer_id"], kind="stable")
-
-    history_features = response_base[["person", "offer_id", "received_time", "_row_id"]].copy()
-    history_parts = []
-    for person, person_rows in response_base.groupby("person", sort=False):
-        person_history = person_rows[
-            ["person", "offer_id", "received_time", "_row_id"]
-        ].copy()
-        offers_received_before = []
-        offers_completed_before = []
-        prior_received = 0
-        prior_completed = 0
-
-        for _, time_rows in person_rows.groupby("received_time", sort=True):
-            group_size = len(time_rows)
-            group_completions = int(time_rows["label"].sum())
-            offers_received_before.extend([prior_received] * group_size)
-            offers_completed_before.extend([prior_completed] * group_size)
-            prior_received += group_size
-            prior_completed += group_completions
-
-        person_history["offers_received_before"] = offers_received_before
-        person_history["offers_completed_before"] = offers_completed_before
-        history_parts.append(person_history)
-
-    history_features = pd.concat(history_parts, ignore_index=True)
-    history_features["offers_received_before"] = history_features["offers_received_before"].astype(
-        int
+    transactions["n_transactions_before"] = transactions.groupby("person").cumcount() + 1
+    transactions["total_spend_before"] = transactions.groupby("person")["amount"].cumsum()
+    transactions["avg_spend_before"] = (
+        transactions["total_spend_before"] / transactions["n_transactions_before"]
     )
-    history_features["offers_completed_before"] = history_features[
-        "offers_completed_before"
-    ].astype(int)
-    history_features["offer_completion_rate_before"] = (
-        history_features["offers_completed_before"]
-        / history_features["offers_received_before"].where(
-            history_features["offers_received_before"] > 0
+    transactions["last_transaction_time"] = transactions["time"]
+
+    features = pd.merge_asof(
+        response_base.sort_values(["received_time", "person"], kind="stable"),
+        transactions[
+            [
+                "person",
+                "time",
+                "n_transactions_before",
+                "total_spend_before",
+                "avg_spend_before",
+                "last_transaction_time",
+            ]
+        ].sort_values(["time", "person"], kind="stable"),
+        left_on="received_time",
+        right_on="time",
+        by="person",
+        direction="backward",
+        allow_exact_matches=False,
+    )
+    features["n_transactions_before"] = features["n_transactions_before"].fillna(0).astype(int)
+    features["total_spend_before"] = features["total_spend_before"].fillna(0.0)
+    features["avg_spend_before"] = features["avg_spend_before"].fillna(0.0)
+    features["days_since_last_transaction"] = (
+        features["received_time"] - features["last_transaction_time"]
+    ) / 24.0
+
+    return features.drop(columns=["time", "last_transaction_time"]).sort_values(
+        ["person", "received_time", "offer_id"], kind="stable"
+    )
+
+
+def _build_offer_history_features(
+    transcript_df: pd.DataFrame, response_base: pd.DataFrame
+) -> pd.DataFrame:
+    """Count prior offer events using only timestamps already observed."""
+    offer_history = transcript_df.loc[
+        transcript_df["event"].isin(OFFER_EVENTS), ["person", "time", "event"]
+    ].copy()
+
+    if offer_history.empty:
+        history = response_base[["person", "offer_id", "received_time", "_row_id"]].copy()
+        history["offers_received_before"] = 0
+        history["offers_viewed_before"] = 0
+        history["offers_completed_before"] = 0
+    else:
+        offer_history = offer_history.sort_values(
+            ["person", "time", "event"], kind="stable"
+        ).reset_index(drop=True)
+        offer_history["received_event"] = (offer_history["event"] == "offer received").astype(
+            int
         )
+        offer_history["viewed_event"] = (offer_history["event"] == "offer viewed").astype(int)
+        offer_history["completed_event"] = (
+            offer_history["event"] == "offer completed"
+        ).astype(int)
+        offer_history["offers_received_before"] = offer_history.groupby("person")[
+            "received_event"
+        ].cumsum()
+        offer_history["offers_viewed_before"] = offer_history.groupby("person")[
+            "viewed_event"
+        ].cumsum()
+        offer_history["offers_completed_before"] = offer_history.groupby("person")[
+            "completed_event"
+        ].cumsum()
+
+        history = pd.merge_asof(
+            response_base.sort_values(["received_time", "person"], kind="stable"),
+            offer_history[
+                [
+                    "person",
+                    "time",
+                    "offers_received_before",
+                    "offers_viewed_before",
+                    "offers_completed_before",
+                ]
+            ].sort_values(["time", "person"], kind="stable"),
+            left_on="received_time",
+            right_on="time",
+            by="person",
+            direction="backward",
+            allow_exact_matches=False,
+        ).drop(columns=["time"])
+        for column in [
+            "offers_received_before",
+            "offers_viewed_before",
+            "offers_completed_before",
+        ]:
+            history[column] = history[column].fillna(0).astype(int)
+
+    history["offer_view_rate_before"] = (
+        history["offers_viewed_before"]
+        / history["offers_received_before"].where(history["offers_received_before"] > 0)
     ).fillna(0.0)
+    history["offer_completion_rate_before"] = (
+        history["offers_completed_before"]
+        / history["offers_received_before"].where(history["offers_received_before"] > 0)
+    ).fillna(0.0)
+    return history
+
+
+def build_behavioral_features(
+    transcript_df: pd.DataFrame, response_df: pd.DataFrame
+) -> pd.DataFrame:
+    """Roll up pre-receipt behavior for each modeling row."""
+    response_base = response_df[["person", "offer_id", "received_time"]].copy()
+    response_base = response_base.sort_values(
+        ["person", "received_time", "offer_id"], kind="stable"
+    ).reset_index(drop=True)
+    response_base["_row_id"] = range(len(response_base))
+
+    transaction_features = _build_transaction_features(transcript_df, response_base)
+    history_features = _build_offer_history_features(transcript_df, response_base)
 
     behavioral_features = transaction_features.merge(
         history_features[
             [
                 "_row_id",
                 "offers_received_before",
+                "offers_viewed_before",
                 "offers_completed_before",
+                "offer_view_rate_before",
                 "offer_completion_rate_before",
             ]
         ],
@@ -225,7 +241,7 @@ def build_behavioral_features(
         validate="one_to_one",
     )
 
-    behavioral_features = behavioral_features[
+    return behavioral_features[
         [
             "person",
             "offer_id",
@@ -235,26 +251,34 @@ def build_behavioral_features(
             "avg_spend_before",
             "days_since_last_transaction",
             "offers_received_before",
+            "offers_viewed_before",
             "offers_completed_before",
+            "offer_view_rate_before",
             "offer_completion_rate_before",
         ]
-    ]
-    behavioral_features = behavioral_features.sort_values(
-        ["person", "received_time", "offer_id"], kind="stable"
-    ).reset_index(drop=True)
-
-    return behavioral_features
+    ].sort_values(["person", "received_time", "offer_id"], kind="stable").reset_index(
+        drop=True
+    )
 
 
 def main() -> None:
-    """Load processed inputs and write customer feature tables to parquet."""
+    """Build customer features from merged receipts and event history."""
     response_merged_df = pd.read_parquet(PROCESSED_DATA_DIR / "response_merged.parquet")
     transcript_df = pd.read_parquet(PROCESSED_DATA_DIR / "transcript_flat.parquet")
-    demographic_features = build_demographic_features(response_merged_df)
+
+    reference_date = (
+        pd.Timestamp(response_merged_df["became_member_on"].max()).normalize()
+        + pd.to_timedelta(float(transcript_df["time"].max()) / 24.0, unit="D")
+    )
+    demographic_features = build_demographic_features(
+        response_merged_df, reference_date=reference_date
+    )
     behavioral_features = build_behavioral_features(transcript_df, response_merged_df)
+
     DEMOGRAPHIC_OUTPUT_FILE.parent.mkdir(parents=True, exist_ok=True)
     demographic_features.to_parquet(DEMOGRAPHIC_OUTPUT_FILE, index=False)
     behavioral_features.to_parquet(BEHAVIORAL_OUTPUT_FILE, index=False)
+
     print(f"Saved {len(demographic_features)} rows to {DEMOGRAPHIC_OUTPUT_FILE}")
     print(f"Saved {len(behavioral_features)} rows to {BEHAVIORAL_OUTPUT_FILE}")
 

@@ -145,18 +145,49 @@ def test_build_behavioral_features_uses_only_transactions_before_received_time()
 
 def test_build_behavioral_features_tracks_prior_offer_history_by_received_time() -> None:
     transcript_df = pd.DataFrame(
-        [{"person": "p1", "event": "transaction", "time": 1, "amount": 5.0}]
+        [
+            {"person": "p1", "event": "transaction", "time": 1, "amount": 5.0},
+            {"person": "p1", "event": "offer received", "time": 0, "amount": pd.NA},
+            {"person": "p1", "event": "offer viewed", "time": 2, "amount": pd.NA},
+            {"person": "p1", "event": "offer completed", "time": 3, "amount": pd.NA},
+            {"person": "p1", "event": "offer received", "time": 10, "amount": pd.NA},
+        ]
     )
     response_df = pd.DataFrame(
         [
-            {"person": "p1", "offer_id": "offer-a", "received_time": 0, "label": 1},
-            {"person": "p1", "offer_id": "offer-b", "received_time": 0, "label": 0},
-            {"person": "p1", "offer_id": "offer-c", "received_time": 10, "label": 0},
+            {"person": "p1", "offer_id": "offer-a", "received_time": 0},
+            {"person": "p1", "offer_id": "offer-b", "received_time": 0},
+            {"person": "p1", "offer_id": "offer-c", "received_time": 10},
         ]
     )
 
     features = build_behavioral_features(transcript_df, response_df)
 
-    assert features["offers_received_before"].tolist() == [0, 0, 2]
+    assert features["offers_received_before"].tolist() == [0, 0, 1]
+    assert features["offers_viewed_before"].tolist() == [0, 0, 1]
     assert features["offers_completed_before"].tolist() == [0, 0, 1]
-    assert features["offer_completion_rate_before"].tolist() == [0.0, 0.0, 0.5]
+    assert features["offer_view_rate_before"].tolist() == [0.0, 0.0, 1.0]
+    assert features["offer_completion_rate_before"].tolist() == [0.0, 0.0, 1.0]
+
+
+def test_build_behavioral_features_does_not_use_future_offer_completion() -> None:
+    transcript_df = pd.DataFrame(
+        [
+            {"person": "p1", "event": "offer received", "time": 0, "amount": pd.NA},
+            {"person": "p1", "event": "offer viewed", "time": 1, "amount": pd.NA},
+            {"person": "p1", "event": "offer received", "time": 5, "amount": pd.NA},
+            {"person": "p1", "event": "offer completed", "time": 10, "amount": pd.NA},
+        ]
+    )
+    response_df = pd.DataFrame(
+        [
+            {"person": "p1", "offer_id": "offer-a", "received_time": 0},
+            {"person": "p1", "offer_id": "offer-b", "received_time": 5},
+        ]
+    )
+
+    features = build_behavioral_features(transcript_df, response_df)
+
+    assert features.loc[1, "offers_received_before"] == 1
+    assert features.loc[1, "offers_completed_before"] == 0
+    assert features.loc[1, "offer_completion_rate_before"] == 0.0

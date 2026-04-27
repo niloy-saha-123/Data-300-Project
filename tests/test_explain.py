@@ -50,7 +50,7 @@ def test_get_feature_importance_df_handles_logistic_pipeline() -> None:
 
     importance_df = get_feature_importance_df(model, make_feature_names())
 
-    assert importance_df.columns.tolist() == ["feature", "importance"]
+    assert importance_df.columns.tolist() == ["feature", "importance", "signed_value"]
     assert len(importance_df) == 4
     assert importance_df["importance"].ge(0).all()
     assert isinstance(get_estimator_for_explanation(model), LogisticRegression)

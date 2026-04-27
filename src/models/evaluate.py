@@ -1,4 +1,4 @@
-"""Evaluation helpers and report figure generation for trained models."""
+"""Score trained models and export report-ready validation figures."""
 
 from __future__ import annotations
 
@@ -29,12 +29,14 @@ from sklearn.metrics import (
 )
 
 from src.models.train import FEATURES_FILE, MODELS_DIR, prepare_xy, split_feature_matrix
+from src.models.train import majority_class_baseline, rule_based_baseline
 from src.utils import plotting as _plotting  # noqa: F401
 
 
 REPORTS_DIR = Path("reports")
 FIGURES_DIR = REPORTS_DIR / "figures"
 METRICS_OUTPUT_FILE = REPORTS_DIR / "validation_model_metrics.csv"
+MODEL_COMPARISON_FILE = REPORTS_DIR / "validation_model_comparison.csv"
 DEFAULT_MODEL_FILES = {
     "logistic_regression": MODELS_DIR / "logistic_regression.joblib",
     "random_forest": MODELS_DIR / "random_forest.joblib",
@@ -126,11 +128,7 @@ def plot_confusion_matrix(
 
 
 def load_available_models() -> dict[str, object]:
-    """Load saved joblib models that exist on disk.
-
-    Skips artifacts that fail to load (e.g. XGBoost model without ``xgboost``
-    installed, or sklearn version mismatch).
-    """
+    """Load saved models that can be deserialized in current environment."""
     models = {}
     for model_name, model_path in DEFAULT_MODEL_FILES.items():
         if not model_path.exists():
@@ -151,7 +149,8 @@ def load_available_models() -> dict[str, object]:
 def main() -> None:
     """Evaluate saved models on validation split and export figures."""
     features_df = pd.read_parquet(FEATURES_FILE)
-    _, validation_df, _ = split_feature_matrix(features_df, strategy="auto")
+    train_df, validation_df, _ = split_feature_matrix(features_df, strategy="auto")
+    _, y_train = prepare_xy(train_df)
     X_validation, y_validation = prepare_xy(validation_df)
     models = load_available_models()
 
@@ -165,7 +164,10 @@ def main() -> None:
     if len(models) == 1:
         confusion_axes = [confusion_axes]
 
-    metrics_rows = []
+    metrics_rows = [
+        {"model": "majority_class", **majority_class_baseline(y_train, y_validation)},
+        {"model": "rule_based", **rule_based_baseline(train_df, validation_df)},
+    ]
     report_frames = []
 
     for axis, (model_name, model) in zip(confusion_axes, models.items()):
@@ -193,6 +195,7 @@ def main() -> None:
 
     metrics_df = pd.DataFrame(metrics_rows).sort_values("roc_auc", ascending=False)
     metrics_df.to_csv(METRICS_OUTPUT_FILE, index=False)
+    metrics_df.to_csv(MODEL_COMPARISON_FILE, index=False)
     report_output = REPORTS_DIR / "validation_classification_reports.csv"
     pd.concat(report_frames, ignore_index=True).to_csv(report_output, index=False)
 

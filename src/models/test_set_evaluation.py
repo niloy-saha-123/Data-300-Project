@@ -1,4 +1,4 @@
-"""Evaluate saved models on the held-out test split (run after training)."""
+"""Score saved models on held-out test split and export final table."""
 
 from __future__ import annotations
 
@@ -98,7 +98,7 @@ def _model_row(
 def run_test_evaluation(
     features_df: pd.DataFrame | None = None,
 ) -> dict[str, object]:
-    """Load data, score test split, return metrics dict (and write reports)."""
+    """Load data, score test split, and write final comparison artifacts."""
     if features_df is None:
         features_df = pd.read_parquet(FEATURES_FILE)
 
@@ -148,6 +148,7 @@ def run_test_evaluation(
     ]
     out_df = out_df[[c for c in column_order if c in out_df.columns]]
     out_df.to_csv(TEST_METRICS_CSV, index=False)
+    out_df.to_csv(REPORTS_DIR / "model_comparison_table.csv", index=False)
 
     return payload
 

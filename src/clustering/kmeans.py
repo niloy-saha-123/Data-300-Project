@@ -1,4 +1,4 @@
-"""Customer segmentation with K-Means clustering."""
+"""Cluster customers into interpretable behavioral segments."""
 
 from __future__ import annotations
 
@@ -27,9 +27,11 @@ FIGURES_DIR = REPORTS_DIR / "figures"
 CUSTOMER_SEGMENTS_FILE = PROCESSED_DATA_DIR / "customer_segments.parquet"
 CLUSTER_EVAL_FILE = REPORTS_DIR / "cluster_model_selection.csv"
 CLUSTER_PROFILE_FILE = REPORTS_DIR / "cluster_profiles.csv"
+CLUSTER_OFFER_RESPONSE_FILE = REPORTS_DIR / "cluster_offer_response.csv"
 ELBOW_FIGURE_FILE = FIGURES_DIR / "kmeans_elbow.png"
 SILHOUETTE_FIGURE_FILE = FIGURES_DIR / "kmeans_silhouette.png"
 HEATMAP_FIGURE_FILE = FIGURES_DIR / "cluster_offer_response_heatmap.png"
+PROFILE_FIGURE_FILE = FIGURES_DIR / "cluster_profile_heatmap.png"
 CLUSTER_FEATURES = [
     "age_imputed",
     "income_imputed",
@@ -98,13 +100,14 @@ def fit_customer_segments(customer_df: pd.DataFrame, n_clusters: int) -> pd.Data
 def summarize_cluster_profiles(
     customer_segments_df: pd.DataFrame, features_df: pd.DataFrame
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
-    """Build cluster profiles and cluster-offer completion heatmap table."""
-    profile_df = (
-        customer_segments_df.groupby("cluster", as_index=False)[CLUSTER_FEATURES]
-        .mean()
-        .sort_values("cluster")
-        .reset_index(drop=True)
+    """Build cluster profiles plus completion rates by offer type."""
+    segment_sizes = (
+        customer_segments_df.groupby("cluster")
+        .size()
+        .rename("segment_size")
+        .reset_index()
     )
+    profile_df = customer_segments_df.groupby("cluster", as_index=False)[CLUSTER_FEATURES].mean()
 
     offer_frame = features_df[["person", "label", "offer_type_bogo", "offer_type_discount"]].copy()
     offer_frame["offer_type"] = offer_frame["offer_type_bogo"].map(
@@ -120,6 +123,17 @@ def summarize_cluster_profiles(
         offer_frame.groupby(["cluster", "offer_type"], as_index=False)["label"]
         .mean()
         .rename(columns={"label": "completion_rate"})
+    )
+    overall_completion = (
+        offer_frame.groupby("cluster", as_index=False)["label"]
+        .mean()
+        .rename(columns={"label": "overall_completion_rate"})
+    )
+    profile_df = (
+        profile_df.merge(segment_sizes, on="cluster", how="left", validate="one_to_one")
+        .merge(overall_completion, on="cluster", how="left", validate="one_to_one")
+        .sort_values("cluster")
+        .reset_index(drop=True)
     )
 
     return profile_df, heatmap_df
@@ -149,7 +163,7 @@ def plot_cluster_selection(evaluation_df: pd.DataFrame) -> None:
 
 
 def plot_cluster_heatmap(heatmap_df: pd.DataFrame) -> None:
-    """Save cluster vs offer-type completion heatmap."""
+    """Save cluster-by-offer completion heatmap."""
     pivot = heatmap_df.pivot(index="cluster", columns="offer_type", values="completion_rate")
     fig, ax = plt.subplots(figsize=(6, 4.5))
     image = ax.imshow(pivot.values, aspect="auto")
@@ -169,6 +183,27 @@ def plot_cluster_heatmap(heatmap_df: pd.DataFrame) -> None:
     plt.close(fig)
 
 
+def plot_cluster_profiles(profile_df: pd.DataFrame) -> None:
+    """Save a standardized heatmap for cluster centroids."""
+    profile_features = profile_df.set_index("cluster")[CLUSTER_FEATURES]
+    standardized = (profile_features - profile_features.mean()) / profile_features.std(
+        ddof=0
+    ).replace(0, 1)
+
+    fig, ax = plt.subplots(figsize=(9, 5))
+    image = ax.imshow(standardized.values, aspect="auto", cmap="RdYlGn")
+    ax.set_title("Cluster Profile Heatmap")
+    ax.set_xlabel("Feature")
+    ax.set_ylabel("Cluster")
+    ax.set_xticks(range(len(standardized.columns)), standardized.columns, rotation=45, ha="right")
+    ax.set_yticks(range(len(standardized.index)), standardized.index)
+    fig.colorbar(image, ax=ax, label="Z-Score")
+    fig.tight_layout()
+    FIGURES_DIR.mkdir(parents=True, exist_ok=True)
+    fig.savefig(PROFILE_FIGURE_FILE, bbox_inches="tight")
+    plt.close(fig)
+
+
 def main() -> None:
     """Run K-Means model selection, fit final segments, and export outputs."""
     features_df = pd.read_parquet(FEATURES_FILE)
@@ -182,9 +217,11 @@ def main() -> None:
     customer_segments_df.to_parquet(CUSTOMER_SEGMENTS_FILE, index=False)
     evaluation_df.to_csv(CLUSTER_EVAL_FILE, index=False)
     profile_df.to_csv(CLUSTER_PROFILE_FILE, index=False)
+    heatmap_df.to_csv(CLUSTER_OFFER_RESPONSE_FILE, index=False)
 
     plot_cluster_selection(evaluation_df)
     plot_cluster_heatmap(heatmap_df)
+    plot_cluster_profiles(profile_df)
 
     print(
         json.dumps(

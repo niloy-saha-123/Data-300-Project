@@ -1,4 +1,4 @@
-"""Build the offer-response target table from parsed transcript events."""
+"""Build offer-response labels from receipt, view, and completion events."""
 
 from __future__ import annotations
 
@@ -13,7 +13,7 @@ OFFER_EVENTS = {"offer received", "offer viewed", "offer completed"}
 
 
 def get_offer_events(transcript_df: pd.DataFrame) -> pd.DataFrame:
-    """Filter the transcript to offer-related events with a non-null offer_id."""
+    """Keep only offer events that can be tied to an offer id."""
     offer_events = transcript_df.loc[
         transcript_df["event"].isin(OFFER_EVENTS) & transcript_df["offer_id"].notna()
     ].copy()
@@ -26,7 +26,7 @@ def get_offer_events(transcript_df: pd.DataFrame) -> pd.DataFrame:
 def build_response_table(
     offer_events_df: pd.DataFrame, portfolio_df: pd.DataFrame
 ) -> pd.DataFrame:
-    """Build one response row per offer receipt using view-before-complete logic."""
+    """Build one receipt row per actionable offer without leaking future intent."""
     portfolio_lookup = (
         portfolio_df.loc[portfolio_df["offer_type"] != "informational"]
         .assign(duration_hours=lambda df: df["duration"] * 24)
@@ -60,6 +60,8 @@ def build_response_table(
                     "viewed_time": pd.NA,
                     "completed": False,
                     "completed_time": pd.NA,
+                    "completed_any": False,
+                    "completed_any_time": pd.NA,
                     "completed_after_view": False,
                 }
                 receipts.append(receipt)
@@ -81,18 +83,28 @@ def build_response_table(
                 continue
 
             if event.event == "offer completed":
-                for receipt in eligible_receipts:
-                    viewed_time = receipt["viewed_time"]
-                    if (
-                        receipt["viewed"]
-                        and not receipt["completed"]
-                        and pd.notna(viewed_time)
-                        and int(viewed_time) < event_time
-                    ):
-                        receipt["completed"] = True
-                        receipt["completed_time"] = event_time
-                        receipt["completed_after_view"] = True
-                        break
+                unmatched_receipts = [
+                    receipt for receipt in eligible_receipts if not receipt["completed_any"]
+                ]
+                viewed_candidates = [
+                    receipt
+                    for receipt in unmatched_receipts
+                    if receipt["viewed"]
+                    and pd.notna(receipt["viewed_time"])
+                    and int(receipt["viewed_time"]) < event_time
+                ]
+                chosen_receipt = (
+                    viewed_candidates[0] if viewed_candidates else unmatched_receipts[0:1]
+                )
+                if not chosen_receipt:
+                    continue
+                receipt = chosen_receipt[0] if isinstance(chosen_receipt, list) else chosen_receipt
+                receipt["completed_any"] = True
+                receipt["completed_any_time"] = event_time
+                if receipt["viewed"] and pd.notna(receipt["viewed_time"]):
+                    receipt["completed"] = True
+                    receipt["completed_time"] = event_time
+                    receipt["completed_after_view"] = int(receipt["viewed_time"]) < event_time
 
     response_df = pd.DataFrame(receipts)
     if response_df.empty:

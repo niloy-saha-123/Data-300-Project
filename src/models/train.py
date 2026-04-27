@@ -1,4 +1,4 @@
-"""Training utilities for baseline and ML offer-response models."""
+"""Train reproducible offer-response models and baseline comparators."""
 
 from __future__ import annotations
 
@@ -7,6 +7,7 @@ import warnings
 from pathlib import Path
 
 import joblib
+import numpy as np
 import pandas as pd
 from sklearn.base import clone
 from sklearn.ensemble import RandomForestClassifier
@@ -42,17 +43,60 @@ TEST_SIZE = 0.2
 VALIDATION_SIZE = 0.2
 CV_FOLDS = 5
 N_JOBS = 1
-TIME_TRAIN_END = 24 * 21
-TIME_VALID_END = 24 * 28
-MIN_TIME_TEST_ROWS = 1000
+TIME_TRAIN_FRACTION = 0.6
+TIME_VALID_FRACTION = 0.8
+MIN_TIME_SPLIT_ROWS = 1000
 ID_COLUMNS = ["person", "offer_id", "received_time"]
 TARGET_COLUMN = "label"
 
 
+def _build_time_split(
+    features_df: pd.DataFrame,
+) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, dict[str, float | int]]:
+    """Split by receipt chronology while keeping whole timestamps together."""
+    unique_times = np.sort(features_df["received_time"].dropna().unique())
+    if len(unique_times) < 3:
+        raise ValueError("Not enough distinct receipt times for a chronological split.")
+
+    train_idx = max(0, int(np.floor(len(unique_times) * TIME_TRAIN_FRACTION)) - 1)
+    valid_idx = max(train_idx + 1, int(np.floor(len(unique_times) * TIME_VALID_FRACTION)) - 1)
+    valid_idx = min(valid_idx, len(unique_times) - 2)
+    if train_idx >= valid_idx:
+        raise ValueError("Chronological split cutoffs collapsed onto same time block.")
+
+    train_cutoff = unique_times[train_idx]
+    valid_cutoff = unique_times[valid_idx]
+
+    train_df = features_df.loc[features_df["received_time"] <= train_cutoff].copy()
+    validation_df = features_df.loc[
+        (features_df["received_time"] > train_cutoff)
+        & (features_df["received_time"] <= valid_cutoff)
+    ].copy()
+    test_df = features_df.loc[features_df["received_time"] > valid_cutoff].copy()
+
+    split_info = {
+        "train_cutoff": float(train_cutoff),
+        "validation_cutoff": float(valid_cutoff),
+        "train_rows": int(len(train_df)),
+        "validation_rows": int(len(validation_df)),
+        "test_rows": int(len(test_df)),
+    }
+    return train_df, validation_df, test_df, split_info
+
+
 def choose_split_strategy(features_df: pd.DataFrame) -> str:
-    """Use fixed time split only when dataset actually has late-week holdout rows."""
-    test_rows = (features_df["received_time"] >= TIME_VALID_END).sum()
-    return "time" if test_rows >= MIN_TIME_TEST_ROWS else "random"
+    """Prefer a time split when each block is large enough and has both classes."""
+    try:
+        train_df, validation_df, test_df, _ = _build_time_split(features_df)
+    except ValueError:
+        return "random"
+
+    splits = [train_df, validation_df, test_df]
+    if any(len(split_df) < MIN_TIME_SPLIT_ROWS for split_df in splits):
+        return "random"
+    if any(split_df[TARGET_COLUMN].nunique() < 2 for split_df in splits):
+        return "random"
+    return "time"
 
 
 def split_feature_matrix(
@@ -65,13 +109,12 @@ def split_feature_matrix(
         strategy = choose_split_strategy(features_df)
 
     if strategy == "time":
-        train_df = features_df.loc[features_df["received_time"] < TIME_TRAIN_END].copy()
-        validation_df = features_df.loc[
-            (features_df["received_time"] >= TIME_TRAIN_END)
-            & (features_df["received_time"] < TIME_VALID_END)
-        ].copy()
-        test_df = features_df.loc[features_df["received_time"] >= TIME_VALID_END].copy()
-        return train_df, validation_df, test_df
+        train_df, validation_df, test_df, _ = _build_time_split(features_df)
+        return (
+            train_df.reset_index(drop=True),
+            validation_df.reset_index(drop=True),
+            test_df.reset_index(drop=True),
+        )
 
     if strategy != "random":
         raise ValueError(f"Unsupported split strategy: {strategy}")
@@ -240,20 +283,25 @@ def save_model(model: object, path: Path) -> None:
 
 
 def main() -> None:
-    """Train project baselines and core ML models from final feature matrix."""
+    """Train baselines and production models from final feature matrix."""
     features_df = pd.read_parquet(FEATURES_FILE)
-    train_df, validation_df, test_df = split_feature_matrix(features_df, strategy="auto")
+    split_strategy = choose_split_strategy(features_df)
+    train_df, validation_df, test_df = split_feature_matrix(
+        features_df, strategy=split_strategy
+    )
     X_train, y_train = prepare_xy(train_df)
     X_validation, y_validation = prepare_xy(validation_df)
 
     metrics: dict[str, dict[str, float | int | str]] = {}
-    split_strategy = choose_split_strategy(features_df)
     metrics["split"] = {
         "strategy": split_strategy,
         "train_rows": int(len(train_df)),
         "validation_rows": int(len(validation_df)),
         "test_rows": int(len(test_df)),
     }
+    if split_strategy == "time":
+        _, _, _, split_info = _build_time_split(features_df)
+        metrics["split"].update(split_info)
     metrics["environment"] = {
         "xgboost_available": XGBClassifier is not None,
     }
