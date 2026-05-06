@@ -16,12 +16,13 @@ import matplotlib.pyplot as plt
 import pandas as pd
 from sklearn.pipeline import Pipeline
 
-from src.models.train import FEATURES_FILE, METRICS_FILE, prepare_xy, split_feature_matrix
-from src.utils import plotting as _plotting  # noqa: F401
+from train import FEATURES_FILE, METRICS_FILE, prepare_xy, split_feature_matrix
+import sys, os; sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+from utils import plotting as _plotting
 
 
-MODELS_DIR = Path("models")
-REPORTS_DIR = Path("reports")
+MODELS_DIR = Path("../../models")
+REPORTS_DIR = Path("../../reports")
 FIGURES_DIR = REPORTS_DIR / "figures"
 IMPORTANCE_DIR = REPORTS_DIR / "feature_importance"
 SHAP_SUMMARY_FILE = FIGURES_DIR / "shap_summary.png"

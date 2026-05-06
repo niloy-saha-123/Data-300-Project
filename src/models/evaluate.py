@@ -28,12 +28,13 @@ from sklearn.metrics import (
     roc_curve,
 )
 
-from src.models.train import FEATURES_FILE, MODELS_DIR, prepare_xy, split_feature_matrix
-from src.models.train import majority_class_baseline, rule_based_baseline
-from src.utils import plotting as _plotting  # noqa: F401
+from train import FEATURES_FILE, MODELS_DIR, prepare_xy, split_feature_matrix
+from train import majority_class_baseline, rule_based_baseline
+import sys, os; sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+from utils import plotting as _plotting
 
 
-REPORTS_DIR = Path("reports")
+REPORTS_DIR = Path("../../reports")
 FIGURES_DIR = REPORTS_DIR / "figures"
 METRICS_OUTPUT_FILE = REPORTS_DIR / "validation_model_metrics.csv"
 MODEL_COMPARISON_FILE = REPORTS_DIR / "validation_model_comparison.csv"
@@ -99,15 +100,34 @@ def classification_report_df(
     report_df = pd.DataFrame(report).T.reset_index().rename(columns={"index": "label"})
     return report_df
 
+def find_optimal_threshold(y_true: pd.Series, scores: pd.Series) -> tuple[float, float]:
+    """Find the probability threshold that maximizes the F1 score."""
+    precisions, recalls, thresholds = precision_recall_curve(y_true, scores)
+    
+    # Calculate F1 for all thresholds. Add 1e-10 to avoid division by zero
+    f1_scores = 2 * (precisions[:-1] * recalls[:-1]) / (precisions[:-1] + recalls[:-1] + 1e-10)
+    
+    best_idx = np.argmax(f1_scores)
+    best_threshold = thresholds[best_idx]
+    best_f1 = f1_scores[best_idx]
+    
+    return float(best_threshold), float(best_f1)
 
 def evaluate_model(
     model: object, X_test: pd.DataFrame, y_test: pd.Series, model_name: str
 ) -> dict[str, float | str]:
-    """Compute core validation metrics for one model."""
+    """Compute core validation metrics using the optimal F1 threshold."""
     scores = get_positive_scores(model, X_test)
-    predictions = (scores >= 0.5).astype(int)
+    
+    # 1. Find the best threshold
+    optimal_threshold, best_f1 = find_optimal_threshold(y_test, scores)
+    
+    # 2. Apply the custom threshold instead of 0.5
+    predictions = (scores >= optimal_threshold).astype(int)
+    
     return {
         "model": model_name,
+        "optimal_threshold": optimal_threshold,  # We are saving this!
         "roc_auc": float(roc_auc_score(y_test, scores)),
         "average_precision": float(average_precision_score(y_test, scores)),
         "f1": float(f1_score(y_test, predictions, zero_division=0)),
@@ -165,8 +185,8 @@ def main() -> None:
         confusion_axes = [confusion_axes]
 
     metrics_rows = [
-        {"model": "majority_class", **majority_class_baseline(y_train, y_validation)},
-        {"model": "rule_based", **rule_based_baseline(train_df, validation_df)},
+        {"model": "majority_class", "optimal_threshold": 0.5, **majority_class_baseline(y_train, y_validation)},
+        {"model": "rule_based", "optimal_threshold": 0.5, **rule_based_baseline(train_df, validation_df)},
     ]
     report_frames = []
 

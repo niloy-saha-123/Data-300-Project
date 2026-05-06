@@ -21,6 +21,8 @@ from sklearn.metrics import (
 from sklearn.model_selection import StratifiedKFold, cross_validate, train_test_split
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import MinMaxScaler
+from sklearn.model_selection import RandomizedSearchCV
+from scipy.stats import uniform, randint
 
 try:
     from xgboost import XGBClassifier
@@ -34,8 +36,8 @@ warnings.filterwarnings(
 )
 
 
-PROCESSED_DATA_DIR = Path("data/processed")
-MODELS_DIR = Path("models")
+PROCESSED_DATA_DIR = Path("../../data/processed")
+MODELS_DIR = Path("../../models")
 FEATURES_FILE = PROCESSED_DATA_DIR / "features.parquet"
 METRICS_FILE = MODELS_DIR / "model_metrics.json"
 RANDOM_STATE = 42
@@ -261,16 +263,41 @@ def fit_and_evaluate_model(
     y_train: pd.Series,
     X_validation: pd.DataFrame,
     y_validation: pd.Series,
+    param_distributions: dict | None = None,
 ) -> tuple[object, dict[str, float]]:
-    """Fit model on training split and score on validation split."""
-    fitted_model = clone(model)
-    with warnings.catch_warnings():
-        warnings.filterwarnings(
-            "ignore",
-            module=r"sklearn\.utils\.extmath",
-            category=RuntimeWarning,
+    """Fit (and optionally tune) model on training split and score on validation."""
+    if param_distributions:
+        print(f"Running RandomizedSearchCV...")
+        search = RandomizedSearchCV(
+            estimator=model,
+            param_distributions=param_distributions,
+            n_iter=15,
+            scoring='f1',
+            cv=3,
+            random_state=RANDOM_STATE,
+            n_jobs=N_JOBS,
+            verbose=1
         )
-        fitted_model.fit(X_train, y_train)
+        with warnings.catch_warnings():
+            warnings.filterwarnings(
+                "ignore",
+                module=r"sklearn\.utils\.extmath",
+                category=RuntimeWarning,
+            )
+            search.fit(X_train, y_train)
+        
+        fitted_model = search.best_estimator_
+        print(f"Best parameters found: {search.best_params_}")
+    else:
+        fitted_model = clone(model)
+        with warnings.catch_warnings():
+            warnings.filterwarnings(
+                "ignore",
+                module=r"sklearn\.utils\.extmath",
+                category=RuntimeWarning,
+            )
+            fitted_model.fit(X_train, y_train)
+
     validation_scores = fitted_model.predict_proba(X_validation)[:, 1]
     metrics = evaluate_binary_predictions(y_validation, pd.Series(validation_scores))
     return fitted_model, metrics
@@ -308,14 +335,40 @@ def main() -> None:
     metrics["majority_class"] = majority_class_baseline(y_train, y_validation)
     metrics["rule_based"] = rule_based_baseline(train_df, validation_df)
 
+    # Define search spaces for ALL models
+    param_dists = {
+        "logistic_regression": {
+            # Note the 'classifier__' prefix because LR is inside a Pipeline
+            'classifier__C': uniform(0.1, 10.0), 
+        },
+        "random_forest": {
+            'n_estimators': randint(100, 300),
+            'max_depth': [None, 10, 20, 30],
+            'min_samples_leaf': randint(1, 5)
+        },
+        "xgboost": {
+            'learning_rate': uniform(0.01, 0.2),
+            'max_depth': randint(3, 8),
+            'n_estimators': randint(100, 300),
+            # scipy.stats uniform takes (loc, scale), so uniform(0.6, 0.4) searches 0.6 to 1.0
+            'subsample': uniform(0.6, 0.4),      
+            'colsample_bytree': uniform(0.6, 0.4) 
+        }
+    }
+
     for model_name, model in build_model_registry().items():
+        print(f"\nTraining and tuning {model_name}...")
         cv_metrics = train_model(model, X_train, y_train)
+        
+        dist = param_dists.get(model_name)
+        
         fitted_model, validation_metrics = fit_and_evaluate_model(
             model,
             X_train,
             y_train,
             X_validation,
             y_validation,
+            param_distributions=dist
         )
         save_model(fitted_model, MODELS_DIR / f"{model_name}.joblib")
         metrics[model_name] = {**cv_metrics, **validation_metrics}

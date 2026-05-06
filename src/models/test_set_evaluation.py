@@ -20,15 +20,15 @@ from sklearn.metrics import (
     roc_auc_score,
 )
 
-from src.models.evaluate import get_positive_scores, load_available_models
-from src.models.train import (
+from evaluate import get_positive_scores, load_available_models
+from train import (
     FEATURES_FILE,
     choose_split_strategy,
     prepare_xy,
     split_feature_matrix,
 )
 
-REPORTS_DIR = Path("reports")
+REPORTS_DIR = Path("../../reports")
 TEST_METRICS_JSON = REPORTS_DIR / "test_set_metrics.json"
 TEST_METRICS_CSV = REPORTS_DIR / "test_set_model_metrics.csv"
 
@@ -81,10 +81,10 @@ def _baseline_row(
 
 
 def _model_row(
-    model_name: str, model: object, X_test: pd.DataFrame, y_test: pd.Series
+    model_name: str, model: object, X_test: pd.DataFrame, y_test: pd.Series, threshold: float = 0.5
 ) -> dict[str, float | str]:
     scores = get_positive_scores(model, X_test)
-    predictions = (scores >= 0.5).astype(int)
+    predictions = (scores >= threshold).astype(int)  # Use the custom threshold!
     return {
         "model": model_name,
         "roc_auc": _safe_roc_auc(y_test, scores),
@@ -126,9 +126,24 @@ def run_test_evaluation(
         "models": [],
     }
 
+    # 1. Load the optimal thresholds from the validation phase
+    validation_metrics_file = REPORTS_DIR / "validation_model_comparison.csv"
+    thresholds = {}
+    if validation_metrics_file.exists():
+        val_df = pd.read_csv(validation_metrics_file)
+        if "optimal_threshold" in val_df.columns:
+            thresholds = dict(zip(val_df["model"], val_df["optimal_threshold"]))
+
+    # 2. Score the models using their custom thresholds
     models = load_available_models()
     payload["models"] = [
-        _model_row(name, model, X_test, y_test) for name, model in models.items()
+        _model_row(
+            name, 
+            model, 
+            X_test, 
+            y_test, 
+            threshold=thresholds.get(name, 0.5) # Default to 0.5 if missing
+        ) for name, model in models.items()
     ]
 
     REPORTS_DIR.mkdir(parents=True, exist_ok=True)
