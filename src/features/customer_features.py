@@ -7,7 +7,7 @@ from pathlib import Path
 import pandas as pd
 
 
-PROCESSED_DATA_DIR = Path("data/processed")
+PROCESSED_DATA_DIR = Path("../../data/processed")
 DEMOGRAPHIC_OUTPUT_FILE = PROCESSED_DATA_DIR / "demographic_features.parquet"
 BEHAVIORAL_OUTPUT_FILE = PROCESSED_DATA_DIR / "behavioral_features.parquet"
 GENDER_LEVELS = ["F", "M", "O", "unknown"]
@@ -87,16 +87,12 @@ def build_demographic_features(
 def _build_transaction_features(
     transcript_df: pd.DataFrame, response_base: pd.DataFrame
 ) -> pd.DataFrame:
-    """Summarize spend history before each offer receipt."""
+    """Summarize spend history and recent velocity before each offer receipt."""
     transactions = transcript_df.loc[
         transcript_df["event"] == "transaction", ["person", "time", "amount"]
     ].copy()
-    transactions["amount"] = pd.to_numeric(transactions["amount"], errors="coerce").fillna(
-        0.0
-    )
-    transactions = transactions.sort_values(["person", "time"], kind="stable").reset_index(
-        drop=True
-    )
+    transactions["amount"] = pd.to_numeric(transactions["amount"], errors="coerce").fillna(0.0)
+    transactions = transactions.sort_values(["person", "time"], kind="stable").reset_index(drop=True)
 
     if transactions.empty:
         features = response_base[["person", "offer_id", "received_time", "_row_id"]].copy()
@@ -104,6 +100,8 @@ def _build_transaction_features(
         features["total_spend_before"] = 0.0
         features["avg_spend_before"] = 0.0
         features["days_since_last_transaction"] = pd.NA
+        features["spend_last_7d"] = 0.0
+        features["trans_last_7d"] = 0
         return features
 
     transactions["n_transactions_before"] = transactions.groupby("person").cumcount() + 1
@@ -113,6 +111,7 @@ def _build_transaction_features(
     )
     transactions["last_transaction_time"] = transactions["time"]
 
+    # 1. Base merge (Current state just before received_time)
     features = pd.merge_asof(
         response_base.sort_values(["received_time", "person"], kind="stable"),
         transactions[
@@ -131,6 +130,33 @@ def _build_transaction_features(
         direction="backward",
         allow_exact_matches=False,
     )
+
+    # 2. Velocity merge (State exactly 7 days ago. Starbucks time is in hours, so 7 * 24 = 168)
+    features["time_7d_ago"] = features["received_time"] - 168
+    
+    history_7d = pd.merge_asof(
+        features.sort_values(["time_7d_ago", "person"], kind="stable"),
+        transactions[
+            ["person", "time", "n_transactions_before", "total_spend_before"]
+        ].rename(columns={
+            "n_transactions_before": "n_trans_7d_ago",
+            "total_spend_before": "spend_7d_ago"
+        }).sort_values(["time", "person"], kind="stable"),
+        left_on="time_7d_ago",
+        right_on="time",
+        by="person",
+        direction="backward",
+        allow_exact_matches=True,
+    )
+
+    # Rejoin the 7-day history safely using _row_id
+    features = features.merge(
+        history_7d[["_row_id", "n_trans_7d_ago", "spend_7d_ago"]],
+        on="_row_id",
+        how="left"
+    )
+
+    # Fill NaNs for baseline features
     features["n_transactions_before"] = features["n_transactions_before"].fillna(0).astype(int)
     features["total_spend_before"] = features["total_spend_before"].fillna(0.0)
     features["avg_spend_before"] = features["avg_spend_before"].fillna(0.0)
@@ -138,9 +164,20 @@ def _build_transaction_features(
         features["received_time"] - features["last_transaction_time"]
     ) / 24.0
 
-    return features.drop(columns=["time", "last_transaction_time"]).sort_values(
-        ["person", "received_time", "offer_id"], kind="stable"
+    # Fill NaNs for the 7-day history (NaN means 0 spend/trans before that point)
+    features["n_trans_7d_ago"] = features["n_trans_7d_ago"].fillna(0).astype(int)
+    features["spend_7d_ago"] = features["spend_7d_ago"].fillna(0.0)
+
+    # 3. Calculate 7-day Velocity
+    features["spend_last_7d"] = features["total_spend_before"] - features["spend_7d_ago"]
+    features["trans_last_7d"] = features["n_transactions_before"] - features["n_trans_7d_ago"]
+
+    # Cleanup
+    features = features.drop(
+        columns=["time", "last_transaction_time", "time_7d_ago", "n_trans_7d_ago", "spend_7d_ago"]
     )
+
+    return features.sort_values(["person", "received_time", "offer_id"], kind="stable")
 
 
 def _build_offer_history_features(
@@ -250,6 +287,8 @@ def build_behavioral_features(
             "total_spend_before",
             "avg_spend_before",
             "days_since_last_transaction",
+            "spend_last_7d",          
+            "trans_last_7d",
             "offers_received_before",
             "offers_viewed_before",
             "offers_completed_before",

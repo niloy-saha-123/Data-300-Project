@@ -7,7 +7,7 @@ from pathlib import Path
 import pandas as pd
 
 
-PROCESSED_DATA_DIR = Path("data/processed")
+PROCESSED_DATA_DIR = Path("../../data/processed")
 FEATURES_OUTPUT_FILE = PROCESSED_DATA_DIR / "features.parquet"
 JOIN_KEYS = ["person", "offer_id", "received_time"]
 
